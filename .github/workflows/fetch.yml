@@ -1,0 +1,51 @@
+name: MLB slate fetch
+
+on:
+  schedule:
+    - cron: '*/20 * * * *'   # every ~20 min. Public repo → Actions minutes are FREE.
+  workflow_dispatch: {}       # manual run from the Actions tab
+
+concurrency:
+  group: slate-fetch
+  cancel-in-progress: false   # never overlap a publish
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Pull SGO slate (the ONLY SportsGameOdds call in the whole stack)
+        env:
+          SGO_API_KEY: ${{ secrets.SGO_API_KEY }}
+        run: python fetch.py
+
+      - name: Publish slate to mlb-odds (single force-pushed commit → no history bloat)
+        run: |
+          [ -f mlb_slate.json ] || { echo "no slate file — fetch failed"; exit 1; }
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.SLATE_WRITE_KEY }}" > ~/.ssh/slate_key
+          chmod 600 ~/.ssh/slate_key
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/slate_key -o StrictHostKeyChecking=no"
+          rm -rf /tmp/slate
+          git clone -q --depth 1 git@github.com:rsnbets/mlb-odds.git /tmp/slate
+          cp mlb_slate.json /tmp/slate/
+          cd /tmp/slate
+          git config user.name "slate-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add mlb_slate.json
+          if git diff --cached --quiet; then
+            echo "slate unchanged — nothing to publish"
+          else
+            git commit -q --amend -m "slate $(date -u '+%Y-%m-%dT%H:%MZ')" --reset-author
+            git push -qf origin main
+            echo "slate published to mlb-odds"
+          fi
