@@ -2,7 +2,7 @@ name: MLB slate fetch
 
 on:
   schedule:
-    - cron: '*/20 * * * *'   # every ~20 min. Public repo → Actions minutes are FREE.
+    - cron: '0 * * * *'      # hourly (GitHub throttles sub-hourly schedules anyway). Public repo → free.
   workflow_dispatch: {}       # manual run from the Actions tab
 
 concurrency:
