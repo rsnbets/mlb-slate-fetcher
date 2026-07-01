@@ -9,6 +9,9 @@ concurrency:
   group: slate-fetch
   cancel-in-progress: false   # never overlap a publish
 
+permissions:
+  contents: write             # push the public odds feed to this repo's gh-pages
+
 jobs:
   fetch:
     runs-on: ubuntu-latest
@@ -49,3 +52,15 @@ jobs:
             git push -qf origin main
             echo "slate published to mlb-odds"
           fi
+
+      - name: Publish live odds feed to gh-pages (public, CORS — for client-side boards)
+        run: |
+          [ -f board_odds.json ] || { echo "no board_odds.json — skipping"; exit 0; }
+          tmpd=$(mktemp -d); cp board_odds.json "$tmpd/"
+          cd "$tmpd"
+          git init -q && git checkout -q -b gh-pages
+          git add board_odds.json
+          git -c user.name=slate-bot -c user.email=actions@users.noreply.github.com \
+            commit -q -m "odds $(date -u '+%Y-%m-%dT%H:%MZ')"
+          git push -qf "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" gh-pages
+          echo "live odds feed published to gh-pages"

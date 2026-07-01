@@ -55,6 +55,40 @@ def _fetch_events():
     return events
 
 
+
+def _trim_for_boards(events):
+    """A small PUBLIC odds feed for client-side boards: per market -> per player ->
+    line, SGO fair, and per-book over/under. Tiny vs the full 14MB slate, and
+    browser-fetchable (served from gh-pages with permissive CORS)."""
+    markets = {}
+    for e in events:
+        players = e.get("players", {}) or {}
+        odds = e.get("odds", {}) or {}
+        for oid, o in odds.items():
+            if o.get("betTypeID") != "ou" or o.get("sideID") != "over":
+                continue
+            stat = o.get("statID")
+            name = (players.get(o.get("playerID"), {}) or {}).get("name")
+            if not stat or not name:
+                continue
+            under = odds.get(o.get("opposingOddID", ""), {}) or {}
+            books = {}
+            for bk, bd in (o.get("byBookmaker", {}) or {}).items():
+                if bd.get("available"):
+                    books.setdefault(bk, {})["over"] = bd.get("odds")
+            for bk, bd in (under.get("byBookmaker", {}) or {}).items():
+                if bd.get("available"):
+                    books.setdefault(bk, {})["under"] = bd.get("odds")
+            if not books:
+                continue
+            markets.setdefault(stat, {})[name] = {
+                "line": o.get("bookOverUnder") or o.get("fairOverUnder"),
+                "fair_over": o.get("fairOdds") if o.get("fairOddsAvailable") else None,
+                "books": books,
+            }
+    return markets
+
+
 def main():
     if not SGO_KEY:
         print("SGO_API_KEY not set", file=sys.stderr)
@@ -71,6 +105,11 @@ def main():
     with open(OUT, "w") as f:
         json.dump(slate, f)
     print(f"wrote {OUT}: {len(events)} events, {os.path.getsize(OUT)} bytes")
+    board = {"fetched_at": slate["fetched_at"], "markets": _trim_for_boards(events)}
+    with open("board_odds.json", "w") as bf:
+        json.dump(board, bf)
+    print(f"wrote board_odds.json: {sum(len(v) for v in board['markets'].values())} player-markets, "
+          f"{os.path.getsize('board_odds.json')} bytes")
 
 
 if __name__ == "__main__":
