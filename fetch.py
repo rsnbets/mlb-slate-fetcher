@@ -80,21 +80,31 @@ def _trim_for_boards(events):
             if not stat or not name:
                 continue
             under = odds.get(o.get("opposingOddID", ""), {}) or {}
-            line_default = o.get("bookOverUnder") or o.get("fairOverUnder")
+            lk = str(o.get("bookOverUnder") or o.get("fairOverUnder"))
             lines = markets.setdefault(stat, {}).setdefault(name, {}).setdefault("lines", {})
-            # SGO fair applies to the odd object's own line
+            entry = lines.setdefault(lk, {"books": {}})
+            # SGO fair belongs to this market object. Its fair LINE can differ from
+            # the booked line (SGO quotes fair at its own consensus number, e.g.
+            # fair@1 while books post 0.5) — expose it so consumers can adjust.
             if o.get("fairOddsAvailable"):
-                fl = str(o.get("fairOverUnder") or line_default)
-                lines.setdefault(fl, {"books": {}})["fair_over"] = o.get("fairOdds")
-            # each book files under the line IT actually posts
+                entry["fair_over"] = o.get("fairOdds")
+                fl = str(o.get("fairOverUnder") or lk)
+                if fl != lk:
+                    entry["fair_line"] = fl
+            # books file into this object's line; a book on a different number is
+            # tagged with its own "ou" rather than silently mixed in
             for bk, bd in (o.get("byBookmaker", {}) or {}).items():
                 if bd.get("available"):
-                    lk = str(bd.get("overUnder", line_default))
-                    lines.setdefault(lk, {"books": {}})["books"].setdefault(bk, {})["over"] = bd.get("odds")
+                    b = entry["books"].setdefault(bk, {})
+                    b["over"] = bd.get("odds")
+                    if str(bd.get("overUnder", lk)) != lk:
+                        b["ou"] = str(bd.get("overUnder"))
             for bk, bd in (under.get("byBookmaker", {}) or {}).items():
                 if bd.get("available"):
-                    lk = str(bd.get("overUnder", line_default))
-                    lines.setdefault(lk, {"books": {}})["books"].setdefault(bk, {})["under"] = bd.get("odds")
+                    b = entry["books"].setdefault(bk, {})
+                    b["under"] = bd.get("odds")
+                    if str(bd.get("overUnder", lk)) != lk and "ou" not in b:
+                        b["ou"] = str(bd.get("overUnder"))
     # prune bookless lines; mirror the main (most-booked) line into legacy fields
     for stat, players_d in markets.items():
         for name in list(players_d):
