@@ -72,6 +72,13 @@ def _trim_for_boards(events):
     for e in events:
         players = e.get("players", {}) or {}
         odds = e.get("odds", {}) or {}
+        teams = e.get("teams", {}) or {}
+        ev_ctx = {
+            "id": e.get("eventID"),
+            "home": ((teams.get("home") or {}).get("names") or {}).get("long"),
+            "away": ((teams.get("away") or {}).get("names") or {}).get("long"),
+            "start": (e.get("status") or {}).get("startsAt"),
+        }
         for oid, o in odds.items():
             if o.get("betTypeID") != "ou" or o.get("sideID") != "over":
                 continue
@@ -81,7 +88,9 @@ def _trim_for_boards(events):
                 continue
             under = odds.get(o.get("opposingOddID", ""), {}) or {}
             lk = str(o.get("bookOverUnder") or o.get("fairOverUnder"))
-            lines = markets.setdefault(stat, {}).setdefault(name, {}).setdefault("lines", {})
+            player_entry = markets.setdefault(stat, {}).setdefault(name, {})
+            player_entry.setdefault("ev", ev_ctx)   # game context for event-aware consumers
+            lines = player_entry.setdefault("lines", {})
             entry = lines.setdefault(lk, {"books": {}})
             # SGO fair belongs to this market object. Its fair LINE can differ from
             # the booked line (SGO quotes fair at its own consensus number, e.g.
