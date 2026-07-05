@@ -58,8 +58,16 @@ def _fetch_events():
 
 def _trim_for_boards(events):
     """A small PUBLIC odds feed for client-side boards: per market -> per player ->
-    line, SGO fair, and per-book over/under. Tiny vs the full 14MB slate, and
-    browser-fetchable (served from gh-pages with permissive CORS)."""
+    ALL lines, each with SGO fair + per-book over/under. Browser-fetchable
+    (served from gh-pages with permissive CORS).
+
+    Shape per player:
+      { "line": <main line>, "fair_over": ..., "books": {...},   # legacy: main line
+        "lines": { "0.5": {"fair_over": ..., "books": {bk: {"over","under"}}},
+                   "1.5": {...}, ... } }                          # every alt line
+    The legacy top-level fields mirror the MAIN line (most books) so existing
+    consumers (Dinger live layer) keep working; per-line consumers (hit/K EV
+    tools price each alt line separately) read `lines`."""
     markets = {}
     for e in events:
         players = e.get("players", {}) or {}
@@ -72,20 +80,34 @@ def _trim_for_boards(events):
             if not stat or not name:
                 continue
             under = odds.get(o.get("opposingOddID", ""), {}) or {}
-            books = {}
+            line_default = o.get("bookOverUnder") or o.get("fairOverUnder")
+            lines = markets.setdefault(stat, {}).setdefault(name, {}).setdefault("lines", {})
+            # SGO fair applies to the odd object's own line
+            if o.get("fairOddsAvailable"):
+                fl = str(o.get("fairOverUnder") or line_default)
+                lines.setdefault(fl, {"books": {}})["fair_over"] = o.get("fairOdds")
+            # each book files under the line IT actually posts
             for bk, bd in (o.get("byBookmaker", {}) or {}).items():
                 if bd.get("available"):
-                    books.setdefault(bk, {})["over"] = bd.get("odds")
+                    lk = str(bd.get("overUnder", line_default))
+                    lines.setdefault(lk, {"books": {}})["books"].setdefault(bk, {})["over"] = bd.get("odds")
             for bk, bd in (under.get("byBookmaker", {}) or {}).items():
                 if bd.get("available"):
-                    books.setdefault(bk, {})["under"] = bd.get("odds")
-            if not books:
+                    lk = str(bd.get("overUnder", line_default))
+                    lines.setdefault(lk, {"books": {}})["books"].setdefault(bk, {})["under"] = bd.get("odds")
+    # prune bookless lines; mirror the main (most-booked) line into legacy fields
+    for stat, players_d in markets.items():
+        for name in list(players_d):
+            entry = players_d[name]
+            lines = {lk: v for lk, v in entry.get("lines", {}).items() if v.get("books")}
+            if not lines:
+                del players_d[name]
                 continue
-            markets.setdefault(stat, {})[name] = {
-                "line": o.get("bookOverUnder") or o.get("fairOverUnder"),
-                "fair_over": o.get("fairOdds") if o.get("fairOddsAvailable") else None,
-                "books": books,
-            }
+            entry["lines"] = lines
+            main = max(lines, key=lambda lk: len(lines[lk]["books"]))
+            entry["line"] = main
+            entry["fair_over"] = lines[main].get("fair_over")
+            entry["books"] = lines[main]["books"]
     return markets
 
 
