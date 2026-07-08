@@ -60,9 +60,8 @@ jobs:
         # Fires repository_dispatch so downstream tools rebuild on the SAME
         # cycle the slate publishes — no cron-offset staleness. Gated:
         #   - only when the slate actually changed this run
-        #   - only every 2h during the betting window (9a-7p MT) so
-        #     kprop-tool (private repo, billed Actions minutes) doesn't
-        #     burn ~4.5 min hourly around the clock
+        #   - hourly during the betting window (9a-7p MT); overnight
+        #     hours skipped (slate barely moves, games are done)
         # Best-effort: skips with a warning if DISPATCH_PAT isn't set.
         # DISPATCH_PAT = classic PAT with `repo` scope (same one Vercel uses
         # to hit workflow_dispatch works fine).
@@ -76,7 +75,7 @@ jobs:
           fi
           hour=$(date -u +%H)
           case "$hour" in
-            15|17|19|21|23|01)  ;;   # 9a,11a,1p,3p,5p,7p MT (summer)
+            15|16|17|18|19|20|21|22|23|00|01)  ;;   # hourly 9a-7p MT (summer)
             *) echo "outside dispatch window (hour=${hour}Z) — skipping fanout"; exit 0 ;;
           esac
           for repo in rsnbets/kprop-tool; do   # add rsnbets/mlb-ev here if wanted
