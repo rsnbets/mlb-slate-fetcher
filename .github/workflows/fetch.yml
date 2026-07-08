@@ -32,6 +32,7 @@ jobs:
         run: python fetch.py
 
       - name: Publish slate to mlb-odds (single force-pushed commit → no history bloat)
+        id: publish
         run: |
           [ -f mlb_slate.json ] || { echo "no slate file — fetch failed"; exit 1; }
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
@@ -47,11 +48,46 @@ jobs:
           git add mlb_slate.json
           if git diff --cached --quiet; then
             echo "slate unchanged — nothing to publish"
+            echo "published=false" >> "$GITHUB_OUTPUT"
           else
             git commit -q --amend -m "slate $(date -u '+%Y-%m-%dT%H:%MZ')" --reset-author
             git push -qf origin main
             echo "slate published to mlb-odds"
+            echo "published=true" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Fanout — notify downstream projectors (slate-updated)
+        # Fires repository_dispatch so downstream tools rebuild on the SAME
+        # cycle the slate publishes — no cron-offset staleness. Gated:
+        #   - only when the slate actually changed this run
+        #   - only every 2h during the betting window (9a-7p MT) so
+        #     kprop-tool (private repo, billed Actions minutes) doesn't
+        #     burn ~4.5 min hourly around the clock
+        # Best-effort: skips with a warning if DISPATCH_PAT isn't set.
+        # DISPATCH_PAT = classic PAT with `repo` scope (same one Vercel uses
+        # to hit workflow_dispatch works fine).
+        if: steps.publish.outputs.published == 'true'
+        env:
+          DISPATCH_PAT: ${{ secrets.DISPATCH_PAT }}
+        run: |
+          if [ -z "$DISPATCH_PAT" ]; then
+            echo "::warning::DISPATCH_PAT not set — downstream fanout skipped (kprop stays on its own crons)"
+            exit 0
+          fi
+          hour=$(date -u +%H)
+          case "$hour" in
+            15|17|19|21|23|01)  ;;   # 9a,11a,1p,3p,5p,7p MT (summer)
+            *) echo "outside dispatch window (hour=${hour}Z) — skipping fanout"; exit 0 ;;
+          esac
+          for repo in rsnbets/kprop-tool; do   # add rsnbets/mlb-ev here if wanted
+            curl -sf -X POST \
+              -H "Authorization: Bearer $DISPATCH_PAT" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/$repo/dispatches" \
+              -d '{"event_type":"slate-updated"}' \
+              && echo "dispatched slate-updated → $repo" \
+              || echo "::warning::dispatch to $repo failed"
+          done
 
       - name: Publish live odds feed to gh-pages (public, CORS — for client-side boards)
         run: |
