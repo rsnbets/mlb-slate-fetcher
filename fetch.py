@@ -38,6 +38,10 @@ def _fetch_events():
         "startsAfter": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "startsBefore": f"{end.isoformat()}T08:00:00Z",
         "limit": 50,
+        # Full alternate-line ladders per book (byBookmaker.<bk>.altLines[]).
+        # Off by default in v2; verified available on the Rookie plan 2026-07-27.
+        # ~2x response size, same entity cost.
+        "includeAltLines": "true",
     }
     headers = {"X-Api-Key": SGO_KEY}
     events, cursor = [], None
@@ -101,19 +105,27 @@ def _trim_for_boards(events):
                 if fl != lk:
                     entry["fair_line"] = fl
             # books file into this object's line; a book on a different number is
-            # tagged with its own "ou" rather than silently mixed in
-            for bk, bd in (o.get("byBookmaker", {}) or {}).items():
+            # tagged with its own "ou" rather than silently mixed in. Each book's
+            # ALT ladder (altLines[]) files under the alt line's own key, so the
+            # lines{} map carries the full ladder per market.
+            def _file(bd, bk, side):
                 if bd.get("available"):
                     b = entry["books"].setdefault(bk, {})
-                    b["over"] = bd.get("odds")
-                    if str(bd.get("overUnder", lk)) != lk:
-                        b["ou"] = str(bd.get("overUnder"))
-            for bk, bd in (under.get("byBookmaker", {}) or {}).items():
-                if bd.get("available"):
-                    b = entry["books"].setdefault(bk, {})
-                    b["under"] = bd.get("odds")
+                    b[side] = bd.get("odds")
                     if str(bd.get("overUnder", lk)) != lk and "ou" not in b:
                         b["ou"] = str(bd.get("overUnder"))
+                for alt in (bd.get("altLines") or []):
+                    if not alt.get("available"):
+                        continue
+                    alk = str(alt.get("overUnder"))
+                    if alk in ("", "None"):
+                        continue
+                    ae = lines.setdefault(alk, {"books": {}})
+                    ae["books"].setdefault(bk, {})[side] = alt.get("odds")
+            for bk, bd in (o.get("byBookmaker", {}) or {}).items():
+                _file(bd, bk, "over")
+            for bk, bd in (under.get("byBookmaker", {}) or {}).items():
+                _file(bd, bk, "under")
     # prune bookless lines; mirror the main (most-booked) line into legacy fields
     for stat, players_d in markets.items():
         for name in list(players_d):
