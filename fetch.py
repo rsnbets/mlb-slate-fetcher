@@ -142,6 +142,57 @@ def _trim_for_boards(events):
     return markets
 
 
+def _trim_periods(events):
+    """Compact team run markets for the early-game periods SGO now covers
+    (2026-08 expansion): 1i = first-inning runs (NRFI/YRFI), 1h = first 5
+    innings (F5). Published as a NEW top-level key so existing consumers of
+    `markets` (full-game player props) are untouched.
+
+    Shape:
+      { "1i": { "<eventID>": { "away": ..., "home": ..., "start": ...,
+                "runs": { "all"|"home"|"away": {
+                    "line": "0.5", "fair_over": ...,
+                    "books": { bk: {"over": ..., "under": ...} } } } } },
+        "1h": {...} }
+    """
+    PERIODS = ("1i", "1h")
+    out = {p: {} for p in PERIODS}
+    for e in events:
+        odds = e.get("odds", {}) or {}
+        teams = e.get("teams", {}) or {}
+        for oid, o in odds.items():
+            if (o.get("periodID") not in PERIODS or o.get("statID") != "points"
+                    or o.get("betTypeID") != "ou" or o.get("sideID") != "over"):
+                continue
+            entity = o.get("statEntityID")
+            if entity not in ("all", "home", "away"):
+                continue
+            under = odds.get(o.get("opposingOddID", ""), {}) or {}
+            ev = out[o["periodID"]].setdefault(e.get("eventID"), {
+                "away": ((teams.get("away") or {}).get("names") or {}).get("long"),
+                "home": ((teams.get("home") or {}).get("names") or {}).get("long"),
+                "start": (e.get("status") or {}).get("startsAt"),
+                "runs": {},
+            })
+            entry = ev["runs"].setdefault(entity, {"books": {}})
+            entry["line"] = str(o.get("bookOverUnder") or o.get("fairOverUnder"))
+            if o.get("fairOddsAvailable"):
+                entry["fair_over"] = o.get("fairOdds")
+            for side, obj in (("over", o), ("under", under)):
+                for bk, bd in (obj.get("byBookmaker", {}) or {}).items():
+                    if bd.get("available"):
+                        entry["books"].setdefault(bk, {})[side] = bd.get("odds")
+    # prune bookless entries / empty events
+    for p in PERIODS:
+        for eid in list(out[p]):
+            runs = {k: v for k, v in out[p][eid]["runs"].items() if v.get("books")}
+            if runs:
+                out[p][eid]["runs"] = runs
+            else:
+                del out[p][eid]
+    return out
+
+
 def main():
     if not SGO_KEY:
         print("SGO_API_KEY not set", file=sys.stderr)
@@ -158,10 +209,12 @@ def main():
     with open(OUT, "w") as f:
         json.dump(slate, f)
     print(f"wrote {OUT}: {len(events)} events, {os.path.getsize(OUT)} bytes")
-    board = {"fetched_at": slate["fetched_at"], "markets": _trim_for_boards(events)}
+    board = {"fetched_at": slate["fetched_at"], "markets": _trim_for_boards(events),
+             "periods": _trim_periods(events)}
     with open("board_odds.json", "w") as bf:
         json.dump(board, bf)
     print(f"wrote board_odds.json: {sum(len(v) for v in board['markets'].values())} player-markets, "
+          f"{sum(len(v) for v in board['periods'].values())} period-events, "
           f"{os.path.getsize('board_odds.json')} bytes")
 
 
