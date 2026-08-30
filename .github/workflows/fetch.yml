@@ -78,7 +78,7 @@ jobs:
             15|16|17|18|19|20|21|22|23|00|01)  ;;   # hourly 9a-7p MT (summer)
             *) echo "outside dispatch window (hour=${hour}Z) — skipping fanout"; exit 0 ;;
           esac
-          for repo in rsnbets/kprop-tool; do   # add rsnbets/mlb-ev here if wanted
+          for repo in rsnbets/kprop-tool rsnbets/px-maker-scanner; do   # add rsnbets/mlb-ev here if wanted
             curl -sf -X POST \
               -H "Authorization: Bearer $DISPATCH_PAT" \
               -H "Accept: application/vnd.github+json" \
