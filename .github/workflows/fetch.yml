@@ -3,6 +3,8 @@ name: MLB slate fetch
 on:
   schedule:
     - cron: '0 * * * *'      # hourly (GitHub throttles sub-hourly schedules anyway). Public repo → free.
+                             # Gated below on MLB games today. Note: GitHub disables a public repo's
+                             # schedules after 60 days without a commit, so check it is still active in spring.
   workflow_dispatch: {}       # manual run from the Actions tab
 
 concurrency:
@@ -13,7 +15,29 @@ permissions:
   contents: write             # push the public odds feed to this repo's gh-pages
 
 jobs:
+  gate:
+    # Off-season gate (2026-11-09). A scheduled run only proceeds when MLB has
+    # games on the ET calendar day (today); manual and dispatch runs always
+    # pass. Same idea as kprop-tool's stack-trigger.js. If StatsAPI is
+    # unreachable the run goes ahead. Spring needs no change: the gate opens
+    # on the first game day. Cost: one billed minute per skipped tick.
+    runs-on: ubuntu-latest
+    outputs:
+      games: ${{ steps.check.outputs.games }}
+    steps:
+      - id: check
+        run: |
+          if [ "$GITHUB_EVENT_NAME" != "schedule" ]; then echo "games=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          day=$(TZ=America/New_York date +%F)
+          n=unknown
+          curl -sf --max-time 20 -o sched.json "https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=$day" \
+            && n=$(jq '[.dates[0].games[]? | select(.status.codedGameState != "C")] | length' sched.json)
+          echo "MLB games on $day (ET): $n"
+          if [ "$n" = "0" ]; then echo "games=false" >> "$GITHUB_OUTPUT"; else echo "games=true" >> "$GITHUB_OUTPUT"; fi
+
   fetch:
+    needs: gate
+    if: needs.gate.outputs.games == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
